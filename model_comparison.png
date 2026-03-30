@@ -1,0 +1,25 @@
+Smart Attendance System — Accuracy Report
+==================================================
+Best Model    : SVM (RBF)
+Test Accuracy : 97.50%
+F1-Score      : 97.46%
+Precision     : 97.49%
+Recall        : 97.50%
+
+Classification Report:
+              precision    recall  f1-score   support
+
+        S001       0.92      0.92      0.92        12
+        S002       0.91      0.83      0.87        12
+        S003       0.92      1.00      0.96        12
+        S004       1.00      1.00      1.00        12
+        S005       1.00      1.00      1.00        12
+        S006       1.00      1.00      1.00        12
+        S007       1.00      1.00      1.00        12
+        S008       1.00      1.00      1.00        12
+        S009       1.00      1.00      1.00        12
+        S010       1.00      1.00      1.00        12
+
+    accuracy                           0.97       120
+   macro avg       0.97      0.97      0.97       120
+weighted avg       0.97      0.97      0.97       120

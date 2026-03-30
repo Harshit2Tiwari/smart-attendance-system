@@ -1,0 +1,180 @@
+"""
+train_model.py
+==============
+Trains FOUR classifiers on the preprocessed face-feature data,
+compares them, selects the best, and saves all artefacts.
+
+Models compared:
+  1. SVM (RBF kernel)             ← usually wins on face tasks
+  2. Random Forest
+  3. K-Nearest Neighbours
+  4. Logistic Regression
+
+Outputs:
+  • models/best_model.pkl         ← best classifier
+  • models/all_results.pkl        ← comparison table
+  • models/pipeline.pkl           ← scaler + pca + encoder (for inference)
+"""
+
+import pickle
+import warnings
+import numpy as np
+
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, confusion_matrix, classification_report,
+)
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+
+warnings.filterwarnings("ignore")
+SEED = 42
+
+
+# ── Load preprocessed data ───────────────────────────────────────
+def load_data(path="dataset/processed/preprocessed.pkl"):
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+# ── Evaluate a model ─────────────────────────────────────────────
+def evaluate(name, model, X_tr, y_tr, X_val, y_val, le):
+    model.fit(X_tr, y_tr)
+    y_pred = model.predict(X_val)
+
+    acc  = accuracy_score(y_val, y_pred)
+    prec = precision_score(y_val, y_pred, average="macro", zero_division=0)
+    rec  = recall_score(y_val, y_pred, average="macro", zero_division=0)
+    f1   = f1_score(y_val, y_pred, average="macro", zero_division=0)
+
+    cv   = cross_val_score(model, X_tr, y_tr,
+                           cv=StratifiedKFold(5, shuffle=True, random_state=SEED),
+                           scoring="accuracy")
+
+    row = {
+        "name":     name,
+        "model":    model,
+        "accuracy": acc,
+        "precision":prec,
+        "recall":   rec,
+        "f1":       f1,
+        "cv_mean":  cv.mean(),
+        "cv_std":   cv.std(),
+    }
+
+    bar = "█" * int(acc * 30)
+    print(f"\n  ┌─ {name}")
+    print(f"  │  Accuracy  : {acc*100:.2f}%  {bar}")
+    print(f"  │  Precision : {prec*100:.2f}%")
+    print(f"  │  Recall    : {rec*100:.2f}%")
+    print(f"  │  F1-Score  : {f1*100:.2f}%")
+    print(f"  └  CV 5-fold : {cv.mean()*100:.2f}% ± {cv.std()*100:.2f}%")
+
+    return row
+
+
+# ── Main ─────────────────────────────────────────────────────────
+def main():
+    print("=" * 55)
+    print("  Smart Attendance — Model Training & Comparison")
+    print("=" * 55)
+
+    art   = load_data()
+    X_tr  = art["X_train"];  y_tr  = art["y_train"]
+    X_val = art["X_val"];    y_val = art["y_val"]
+    X_te  = art["X_test"];   y_te  = art["y_test"]
+    le    = art["label_encoder"]
+
+    print(f"\nTrain : {X_tr.shape} | Val : {X_val.shape} | Test : {X_te.shape}")
+
+    # ── Define models ────────────────────────────────────────────
+    models = [
+        ("SVM (RBF)",
+         SVC(kernel="rbf", C=10, gamma="scale",
+             probability=True, random_state=SEED)),
+
+        ("Random Forest",
+         RandomForestClassifier(n_estimators=200, max_depth=None,
+                                min_samples_split=2, random_state=SEED)),
+
+        ("K-Nearest Neighbours",
+         KNeighborsClassifier(n_neighbors=5, metric="euclidean")),
+
+        ("Logistic Regression",
+         LogisticRegression(C=1.0, max_iter=1000,
+                            random_state=SEED)),
+    ]
+
+    # ── Train & compare ──────────────────────────────────────────
+    print("\n[TRAINING & VALIDATION RESULTS]")
+    results = []
+    for name, clf in models:
+        row = evaluate(name, clf, X_tr, y_tr, X_val, y_val, le)
+        results.append(row)
+
+    # ── Pick best by F1 ──────────────────────────────────────────
+    best = max(results, key=lambda r: r["f1"])
+    print(f"\n{'='*55}")
+    print(f"  🏆  Best Model : {best['name']}")
+    print(f"{'='*55}")
+
+    # ── Final evaluation on held-out test set ────────────────────
+    best_model = best["model"]
+    y_pred_te  = best_model.predict(X_te)
+
+    test_acc = accuracy_score(y_te, y_pred_te)
+    test_f1  = f1_score(y_te, y_pred_te, average="macro")
+
+    print(f"\n[FINAL TEST SET RESULTS — {best['name']}]")
+    print(f"  Test Accuracy : {test_acc*100:.2f}%")
+    print(f"  Test F1-Score : {test_f1*100:.2f}%")
+
+    print(f"\n[CLASSIFICATION REPORT]")
+    print(classification_report(
+        y_te, y_pred_te,
+        target_names=le.classes_,
+        zero_division=0,
+    ))
+
+    print("[CONFUSION MATRIX]")
+    cm = confusion_matrix(y_te, y_pred_te)
+    print(cm)
+
+    # ── Save artefacts ───────────────────────────────────────────
+    import os; os.makedirs("models", exist_ok=True)
+
+    with open("models/best_model.pkl", "wb") as f:
+        pickle.dump(best_model, f)
+
+    pipeline = {
+        "scaler":        art["scaler"],
+        "pca":           art["pca"],
+        "var_selector":  art["var_selector"],
+        "label_encoder": le,
+        "students":      art["students"],
+        "best_model_name": best["name"],
+    }
+    with open("models/pipeline.pkl", "wb") as f:
+        pickle.dump(pipeline, f)
+
+    # Save comparison (without model objects — just metrics)
+    comparison = [
+        {k: v for k, v in r.items() if k != "model"}
+        for r in results
+    ]
+    with open("models/all_results.pkl", "wb") as f:
+        pickle.dump(comparison, f)
+
+    print(f"\n[SUCCESS] Saved →")
+    print(f"  models/best_model.pkl")
+    print(f"  models/pipeline.pkl")
+    print(f"  models/all_results.pkl")
+    print()
+
+
+if __name__ == "__main__":
+    main()
